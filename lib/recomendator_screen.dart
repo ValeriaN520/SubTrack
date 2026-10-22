@@ -17,7 +17,10 @@ class _RecomendatorScreenState extends State<RecomendatorScreen> {
   bool _showRecommendations = false;
   bool _isLoading = false;
 
-  // Переменные для хранения рассчитанных дат
+  // ✅ Переменные для ошибок валидации
+  String? _nameError;
+  String? _costError;
+
   int _recSalaryDate = 10;
   int _recClusterDate = 15;
   int _recEmptyDate = 22;
@@ -26,6 +29,7 @@ class _RecomendatorScreenState extends State<RecomendatorScreen> {
   static const Color _backgroundColor = Color(0xFFF5F5F7);
   static const Color _textDark = Color(0xFF1A1A1A);
   static const Color _textGray = Color(0xFF6B6B6B);
+  static const Color _dangerColor = Color(0xFFE74C3C);
 
   @override
   void dispose() {
@@ -34,26 +38,54 @@ class _RecomendatorScreenState extends State<RecomendatorScreen> {
     super.dispose();
   }
 
-  // ✅ Основная логика аналитики
+  // ✅ Валидация формы
+  bool _validateForm() {
+    bool isValid = true;
+
+    if (_nameController.text.trim().isEmpty) {
+      setState(() => _nameError = 'Введите название сервиса');
+      isValid = false;
+    } else {
+      setState(() => _nameError = null);
+    }
+
+    final costText = _costController.text.trim();
+    if (costText.isEmpty) {
+      setState(() => _costError = 'Введите стоимость');
+      isValid = false;
+    } else if (!RegExp(r'^\d+([,.]\d+)?$').hasMatch(costText)) {
+      setState(() => _costError = 'Некорректная сумма');
+      isValid = false;
+    } else {
+      final cost = double.tryParse(costText.replaceAll(',', '.'));
+      if (cost == null || cost <= 0) {
+        setState(() => _costError = 'Сумма должна быть больше 0');
+        isValid = false;
+      } else {
+        setState(() => _costError = null);
+      }
+    }
+
+    return isValid;
+  }
+
   Future<void> _analyzeAndRecommend() async {
+    if (!_validateForm()) return; // ✅ Проверка перед анализом
+
     setState(() => _isLoading = true);
 
     try {
-      // 1. Получаем данные пользователя и его подписки
       final salaryDate = SupabaseService.salaryDate;
       final subs = await SupabaseService.getSubscriptions();
 
-      // 2. Рекомендация 1: День зарплаты (уже известен)
       _recSalaryDate = salaryDate;
 
-      // 3. Рекомендация 2: День скопления (мода дат списания)
       Map<int, int> dateCounts = {};
       for (var sub in subs) {
         dateCounts[sub.billingDate] = (dateCounts[sub.billingDate] ?? 0) + 1;
       }
 
       if (dateCounts.isEmpty) {
-        // Если подписок нет, предлагаем дату через 5 дней после зарплаты
         _recClusterDate = (salaryDate + 5) > 31 ? 31 : salaryDate + 5;
       } else {
         int maxCount = 0;
@@ -67,11 +99,10 @@ class _RecomendatorScreenState extends State<RecomendatorScreen> {
         _recClusterDate = bestDate;
       }
 
-      // 4. Рекомендация 3: Пустой день месяца
       Set<int> usedDates = dateCounts.keys.toSet();
-      usedDates.add(salaryDate); // Стараемся не предлагать день зарплаты как "пустой"
+      usedDates.add(salaryDate);
 
-      _recEmptyDate = 1; // Значение по умолчанию
+      _recEmptyDate = 1;
       for (int i = 1; i <= 31; i++) {
         if (!usedDates.contains(i)) {
           _recEmptyDate = i;
@@ -79,7 +110,6 @@ class _RecomendatorScreenState extends State<RecomendatorScreen> {
         }
       }
       
-      // Если все 31 день заняты (маловероятно, но для безопасности)
       if (usedDates.length == 31) {
         _recEmptyDate = 31;
       }
@@ -89,7 +119,7 @@ class _RecomendatorScreenState extends State<RecomendatorScreen> {
         _isLoading = false;
       });
     } catch (e) {
-      print('❌ Ошибка аналитики дат: $e');
+      print(' Ошибка аналитики дат: $e');
       setState(() => _isLoading = false);
     }
   }
@@ -126,31 +156,80 @@ class _RecomendatorScreenState extends State<RecomendatorScreen> {
             
             const Text('Название сервиса', style: TextStyle(fontSize: 14, color: _textGray)),
             const SizedBox(height: 8),
-            _buildTextField(_nameController, hintText: 'Например, Яндекс Музыка'),
+            // ✅ Поле с подсветкой ошибки
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))],
+                border: _nameError != null ? Border.all(color: _dangerColor, width: 1.5) : null,
+              ),
+              child: TextField(
+                controller: _nameController,
+                style: const TextStyle(fontSize: 15, color: _textDark),
+                decoration: InputDecoration(
+                  hintText: 'Например, Яндекс Музыка',
+                  hintStyle: TextStyle(color: _textGray),
+                  errorText: _nameError,
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                ),
+                onChanged: (_) => setState(() => _nameError = null),
+              ),
+            ),
             const SizedBox(height: 16),
             
             Row(
               children: [
                 Expanded(
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start, 
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Стоимость', style: TextStyle(fontSize: 14, color: _textGray)), 
-                      const SizedBox(height: 8), 
-                      _buildRubField(_costController)
-                    ]
-                  )
+                      const Text('Стоимость', style: TextStyle(fontSize: 14, color: _textGray)),
+                      const SizedBox(height: 8),
+                      // ✅ Поле с подсветкой ошибки
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))],
+                          border: _costError != null ? Border.all(color: _dangerColor, width: 1.5) : null,
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _costController,
+                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                style: const TextStyle(fontSize: 15, color: _textDark),
+                                decoration: InputDecoration(
+                                  errorText: _costError,
+                                  border: InputBorder.none,
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                ),
+                                onChanged: (_) => setState(() => _costError = null),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.only(right: 16),
+                              child: Text('₽', style: TextStyle(fontSize: 15, color: _textGray)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start, 
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Период списания', style: TextStyle(fontSize: 14, color: _textGray)), 
-                      const SizedBox(height: 8), 
-                      _buildDropdownField(_selectedPeriod, ['Месяц', 'Год', 'Неделя'], (value) => setState(() => _selectedPeriod = value!))
-                    ]
-                  )
+                      const Text('Период списания', style: TextStyle(fontSize: 14, color: _textGray)),
+                      const SizedBox(height: 8),
+                      _buildDropdownField(_selectedPeriod, ['Месяц', 'Год', 'Неделя'], (value) => setState(() => _selectedPeriod = value!)),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -162,10 +241,10 @@ class _RecomendatorScreenState extends State<RecomendatorScreen> {
               child: ElevatedButton(
                 onPressed: _isLoading ? null : _analyzeAndRecommend,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: _primaryColor, 
-                  foregroundColor: Colors.white, 
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), 
-                  elevation: 0
+                  backgroundColor: _primaryColor,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  elevation: 0,
                 ),
                 child: _isLoading
                     ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
@@ -177,26 +256,26 @@ class _RecomendatorScreenState extends State<RecomendatorScreen> {
             
             if (_showRecommendations && !_isLoading) ...[
               _buildRecommendationCard(
-                icon: Icons.account_balance_wallet, 
-                iconColor: _primaryColor, 
-                title: 'День зарплаты', 
-                subtitle: '$_recSalaryDate-го числа', 
+                icon: Icons.account_balance_wallet,
+                iconColor: _primaryColor,
+                title: 'День зарплаты',
+                subtitle: '$_recSalaryDate-го числа',
                 description: 'Деньги уже на счёте — списание пройдёт максимально комфортно для бюджета.',
               ),
               const SizedBox(height: 12),
               _buildRecommendationCard(
-                icon: Icons.layers_outlined, 
-                iconColor: const Color(0xFF10B981), // Зелёный для позитивного действия
-                title: 'День скопления подписок', 
-                subtitle: '$_recClusterDate-го числа', 
+                icon: Icons.layers_outlined,
+                iconColor: const Color(0xFF10B981),
+                title: 'День скопления подписок',
+                subtitle: '$_recClusterDate-го числа',
                 description: 'В этот день у вас уже есть другие платежи. Объедините их, чтобы проще контролировать расходы.',
               ),
               const SizedBox(height: 12),
               _buildRecommendationCard(
-                icon: Icons.event_available_outlined, 
-                iconColor: const Color(0xFFFF9F43), // Оранжевый для внимания
-                title: 'Пустой день месяца', 
-                subtitle: '$_recEmptyDate-го числа', 
+                icon: Icons.event_available_outlined,
+                iconColor: const Color(0xFFFF9F43),
+                title: 'Пустой день месяца',
+                subtitle: '$_recEmptyDate-го числа',
                 description: 'В этот день у вас нет других регулярных списаний, что снизит финансовую нагрузку.',
               ),
             ],
@@ -207,118 +286,67 @@ class _RecomendatorScreenState extends State<RecomendatorScreen> {
     );
   }
 
-  Widget _buildTextField(TextEditingController controller, {String? hintText}) {
-    return Container(
-      height: 50, 
-      decoration: BoxDecoration(
-        color: Colors.white, 
-        borderRadius: BorderRadius.circular(12), 
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))]
-      ), 
-      child: TextField(
-        controller: controller, 
-        style: const TextStyle(fontSize: 15, color: _textDark), 
-        decoration: InputDecoration(
-          hintText: hintText,
-          hintStyle: TextStyle(color: _textGray),
-          border: InputBorder.none, 
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14)
-        )
-      )
-    );
-  }
-
-  Widget _buildRubField(TextEditingController controller) {
-    return Container(
-      height: 50, 
-      decoration: BoxDecoration(
-        color: Colors.white, 
-        borderRadius: BorderRadius.circular(12), 
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))]
-      ), 
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: controller, 
-              keyboardType: const TextInputType.numberWithOptions(decimal: true), 
-              style: const TextStyle(fontSize: 15, color: _textDark), 
-              decoration: const InputDecoration(
-                border: InputBorder.none, 
-                contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14)
-              )
-            )
-          ), 
-          Padding(
-            padding: const EdgeInsets.only(right: 16), 
-            child: Text('₽', style: TextStyle(fontSize: 15, color: _textGray))
-          )
-        ]
-      )
-    );
-  }
-
   Widget _buildDropdownField(String value, List<String> items, ValueChanged<String?> onChanged) {
     return Container(
-      height: 50, 
-      padding: const EdgeInsets.symmetric(horizontal: 16), 
+      height: 50,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
-        color: Colors.white, 
-        borderRadius: BorderRadius.circular(12), 
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))]
-      ), 
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))],
+      ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
-          value: items.contains(value) ? value : items.first, 
-          isExpanded: true, 
-          items: items.map((item) => DropdownMenuItem(value: item, child: Text(item, style: const TextStyle(fontSize: 15, color: _textDark)))).toList(), 
-          onChanged: onChanged, 
-          icon: const Icon(Icons.keyboard_arrow_down, color: _textGray)
-        )
-      )
+          value: items.contains(value) ? value : items.first,
+          isExpanded: true,
+          items: items.map((item) => DropdownMenuItem(value: item, child: Text(item, style: const TextStyle(fontSize: 15, color: _textDark)))).toList(),
+          onChanged: onChanged,
+          icon: const Icon(Icons.keyboard_arrow_down, color: _textGray),
+        ),
+      ),
     );
   }
 
   Widget _buildRecommendationCard({
-    required IconData icon, 
-    required Color iconColor, 
-    required String title, 
-    required String subtitle, 
-    required String description
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required String description,
   }) {
     return Container(
-      padding: const EdgeInsets.all(16), 
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white, 
-        borderRadius: BorderRadius.circular(16), 
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))]
-      ), 
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))],
+      ),
       child: Row(
         children: [
           Container(
-            width: 44, 
-            height: 44, 
+            width: 44,
+            height: 44,
             decoration: BoxDecoration(
-              color: iconColor.withValues(alpha: 0.1), // ✅ Динамический фон под цвет иконки
-              borderRadius: BorderRadius.circular(10)
-            ), 
-            child: Icon(icon, color: iconColor, size: 22)
-          ), 
-          const SizedBox(width: 12), 
+              color: iconColor.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: iconColor, size: 22),
+          ),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start, 
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _textDark)), 
-                const SizedBox(height: 4), 
-                Text(subtitle, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: _textDark)), 
-                const SizedBox(height: 4), 
-                Text(description, style: const TextStyle(fontSize: 12, color: _textGray))
-              ]
-            )
-          )
-        ]
-      )
+                Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _textDark)),
+                const SizedBox(height: 4),
+                Text(subtitle, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: _textDark)),
+                const SizedBox(height: 4),
+                Text(description, style: const TextStyle(fontSize: 12, color: _textGray)),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -326,8 +354,8 @@ class _RecomendatorScreenState extends State<RecomendatorScreen> {
     return Container(
       height: 70,
       decoration: BoxDecoration(
-        color: Colors.white, 
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 10, offset: const Offset(0, -2))]
+        color: Colors.white,
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 10, offset: const Offset(0, -2))],
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,

@@ -170,14 +170,27 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 4),
                       Text('${_totalMonthPrice.toStringAsFixed(0)} ₽', style: const TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: _textDark)),
                       const SizedBox(height: 4),
-                      Text('${(_totalMonthPrice * 12).toStringAsFixed(0)} ₽ в год', style: TextStyle(fontSize: 13, color: _textGray)),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text('${(_totalMonthPrice * 12).toStringAsFixed(0)} ₽ в год', style: TextStyle(fontSize: 13, color: _textGray)),
+                      ),
                       const SizedBox(height: 28),
 
                       if (_trialSubs.isNotEmpty) ...[
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            const Text('Пробные периоды под защитой', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _textDark)),
+                            Expanded(
+                              child: Text(
+                                'Пробные периоды под защитой',
+                                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _textDark),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                               decoration: BoxDecoration(color: const Color(0xFFEDE9FE), borderRadius: BorderRadius.circular(12)),

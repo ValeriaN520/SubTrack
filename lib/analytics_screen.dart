@@ -195,19 +195,75 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   Widget _buildServiceRow(String name, double amount) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Container(width: 36, height: 36, decoration: BoxDecoration(color: const Color(0xFFE8E8ED), borderRadius: BorderRadius.circular(8)), child: Center(child: Text(name.isNotEmpty ? name[0].toUpperCase() : '?', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: _textDark)))),
-          const SizedBox(width: 12),
-          Expanded(child: Text(name, style: const TextStyle(fontSize: 14, color: _textDark))),
-          Text('${amount.toStringAsFixed(0)} ₽', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _textDark)),
-        ],
-      ),
-    );
-  }
+  // ✅ Находим категорию сервиса по имени (берём из подписок)
+  final category = _getServiceCategory(name);
+  final color = _getColorForCategory(category);
 
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 8),
+    child: Row(
+      children: [
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.2), // ✅ Цветной фон по категории
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Center(
+            child: Text(
+              name.isNotEmpty ? name[0].toUpperCase() : '?',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: color), // ✅ Цветная буква
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            name,
+            style: const TextStyle(fontSize: 14, color: _textDark),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        Text('${amount.toStringAsFixed(0)} ₽', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _textDark)),
+      ],
+    ),
+  );
+}
+
+// ✅ Метод для получения категории сервиса по имени
+String _getServiceCategory(String serviceName) {
+  // Ищем в данных аналитики — берём из сервиса
+  // Для простоты используем маппинг по популярным сервисам
+  final nameLower = serviceName.toLowerCase();
+  
+  if (nameLower.contains('кинопоиск') || nameLower.contains('wink') || nameLower.contains('okko') || nameLower.contains('ivi')) return 'Кино';
+  if (nameLower.contains('музык') || nameLower.contains('spotify') || nameLower.contains('яндекс музыка')) return 'Музыка';
+  if (nameLower.contains('litres') || nameLower.contains('книг') || nameLower.contains('bookmate')) return 'Книги';
+  if (nameLower.contains('coursera') || nameLower.contains('skillbox') || nameLower.contains('stepik')) return 'Образование';
+  if (nameLower.contains('notion') || nameLower.contains('trello') || nameLower.contains('figma')) return 'Работа';
+  if (nameLower.contains('yandex') || nameLower.contains('яндекс') || nameLower.contains('plus')) return 'Развлечения';
+  if (nameLower.contains('мтс') || nameLower.contains('билайн') || nameLower.contains('tele2')) return 'Связь';
+  if (nameLower.contains('fit') || nameLower.contains('спорт') || nameLower.contains('gym')) return 'Спорт';
+  
+  return 'Другое';
+}
+
+// ✅ Метод получения цвета по категории (такой же как в home_screen)
+    Color _getColorForCategory(String category) {
+      switch (category) {
+        case 'Кино': return const Color(0xFFFF4444);
+        case 'Книги': return const Color(0xFFFF9F43);
+        case 'Музыка': return const Color(0xFF6C47FF);
+        case 'Образование': return const Color(0xFF10B981);
+        case 'Работа': return const Color(0xFF6B6B6B);
+        case 'Развлечения': return const Color(0xFFFFB800);
+        case 'Связь': return const Color(0xFF9C27B0);
+        case 'Спорт': return const Color(0xFF14B8A6);
+        default: return const Color(0xFF6B6B6B);
+      }
+    }
   Widget _buildFact(IconData icon, String text) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
