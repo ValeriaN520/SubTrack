@@ -7,16 +7,16 @@ class SupabaseService {
 
   static String? get userName => _client.auth.currentUser?.userMetadata?['name'] as String? ?? 'Пользователь';
   static String? get userEmail => _client.auth.currentUser?.email;
-  static int get salaryDate => _client.auth.currentUser?.userMetadata?['salary_date'] as int? ?? 10;
+  static int get salaryDate => _client.auth.currentUser?.userMetadata?['reminder_days'] as int? ?? 2;
   static DateTime? get userCreatedAt {
     final createdAt = _client.auth.currentUser?.createdAt;
     return createdAt != null ? DateTime.parse(createdAt) : null;
   }
 
-  static Future<void> updateProfile({String? name, int? salaryDate}) async {
+  static Future<void> updateProfile({String? name, int? reminderDays}) async {
     final metadata = _client.auth.currentUser?.userMetadata ?? {};
     if (name != null) metadata['name'] = name;
-    if (salaryDate != null) metadata['salary_date'] = salaryDate;
+    if (reminderDays != null) metadata['reminder_days'] = reminderDays;
     await _client.auth.updateUser(UserAttributes(data: metadata));
   }
 
@@ -90,10 +90,48 @@ class SupabaseService {
   }
 
   static Future<List<FamilyMember>> getFamilyMembers(String groupId) async {
-    final response = await _client.from('family_members').select().eq('group_id', groupId).eq('status', 'active');
-    return (response as List).map((e) => FamilyMember.fromMap(e)).toList();
+    final response = await _client
+        .from('family_members')
+        .select()
+        .eq('group_id', groupId)
+        .eq('status', 'active');
+
+    final membersList = (response as List).map((e) => FamilyMember.fromMap(e)).toList();
+    
+    if (membersList.isEmpty) return membersList;
+
+    // ✅ Получаем все user_id участников
+    final userIds = membersList.map((m) => m.userId).toSet().toList();
+
+    // ✅ Один запрос к RPC-функции — получаем имена и email всех участников
+    try {
+      final usersInfo = await _client.rpc('get_users_info', params: {'user_ids': userIds});
+      
+      if (usersInfo != null) {
+        for (var userInfo in usersInfo as List) {
+          final userId = userInfo['user_id'] as String;
+          final userName = userInfo['user_name'] as String?;
+          final userEmail = userInfo['user_email'] as String?;
+          
+          // ✅ Находим участника и заполняем его данные
+          final member = membersList.firstWhere(
+            (m) => m.userId == userId,
+            orElse: () => FamilyMember(id: '', groupId: '', userId: '', role: 'member', status: 'active'),
+          );
+          if (member.id.isNotEmpty) {
+            member.userName = userName;
+            member.userEmail = userEmail;
+          }
+        }
+      }
+    } catch (e) {
+      print('❌ Ошибка получения информации о пользователях: $e');
+    }
+
+    return membersList;
   }
 
+   // ✅ Добавление участника в группу (используется при создании семейной подписки)
   static Future<void> addFamilyMember(String groupId, String userId, String role) async {
     await _client.from('family_members').insert({
       'group_id': groupId,
@@ -104,7 +142,7 @@ class SupabaseService {
   }
 
   static Future<void> removeFamilyMember(String memberId) async {
-    await _client.from('family_members').update({'status': 'removed'}).eq('id', memberId);
+    await _client.from('family_members').delete().eq('id', memberId);
   }
 
   // ============================================================
@@ -164,10 +202,22 @@ class SupabaseService {
     }
   }
 
-  static Future<Map<String, dynamic>> getAnalyticsData({required bool isYear}) async {
-    final subs = await getSubscriptions();
-    final now = DateTime.now();
-    final userCreated = userCreatedAt ?? now;
+static Future<Map<String, dynamic>> getAnalyticsData({required bool isYear}) async {
+  // ✅ Получаем и свои подписки, и подписки, где пользователь участник
+  final ownedSubs = await getSubscriptions();
+  final memberSubs = await getMemberSubscriptions();
+  
+  // Объединяем без дубликатов
+  final allSubIds = ownedSubs.map((s) => s.id).toSet();
+  final subs = [...ownedSubs];
+  for (var sub in memberSubs) {
+    if (!allSubIds.contains(sub.id)) {
+      subs.add(sub);
+    }
+  }
+  
+  final now = DateTime.now();
+  final userCreated = userCreatedAt ?? now;
     
     DateTime endDate;
     String periodLabel;
@@ -298,6 +348,78 @@ class SupabaseService {
     await _client.from('reminders').delete().eq('user_id', userId);
   }
 
+  // ✅ Создать reminders для всех существующих подписок
+  static Future<void> createRemindersForAllSubscriptions() async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return;
+
+    final subs = await getSubscriptions();
+    final reminderDays = _client.auth.currentUser?.userMetadata?['reminder_days'] as int? ?? 2;
+
+    for (var sub in subs) {
+      final existingReminders = await _client
+          .from('reminders')
+          .select()
+          .eq('subscription_id', sub.id)
+          .eq('user_id', userId);
+
+      if ((existingReminders as List).isEmpty) {
+        final billingDay = sub.billingDate;
+        final now = DateTime.now();
+        var nextBilling = DateTime(now.year, now.month, billingDay);
+        
+        if (nextBilling.isBefore(now)) {
+          nextBilling = DateTime(now.year, now.month + 1, billingDay);
+        }
+
+        final remindAt = nextBilling.subtract(Duration(days: reminderDays));
+
+        await _client.from('reminders').insert({
+          'subscription_id': sub.id,
+          'user_id': userId,
+          'remind_at': remindAt.toIso8601String(),
+          'is_sent': false,
+        });
+
+        print('✅ Создан reminder для ${sub.name} на ${remindAt.toIso8601String()}');
+      }
+    }
+  }
+
+  // ✅ Обновить reminder при изменении даты списания
+  static Future<void> updateReminder(String subscriptionId, int newBillingDate) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return;
+
+    final reminderDays = _client.auth.currentUser?.userMetadata?['reminder_days'] as int? ?? 2;
+
+    // Удаляем старые reminders
+    await _client
+        .from('reminders')
+        .delete()
+        .eq('subscription_id', subscriptionId)
+        .eq('user_id', userId);
+
+    // Создаём новый reminder
+    final now = DateTime.now();
+    var nextBilling = DateTime(now.year, now.month, newBillingDate);
+    
+    if (nextBilling.isBefore(now)) {
+      nextBilling = DateTime(now.year, now.month + 1, newBillingDate);
+    }
+
+    final remindAt = nextBilling.subtract(Duration(days: reminderDays));
+
+    await _client.from('reminders').insert({
+      'subscription_id': subscriptionId,
+      'user_id': userId,
+      'remind_at': remindAt.toIso8601String(),
+      'is_sent': false,
+    });
+
+    print('✅ Reminder обновлён для подписки $subscriptionId на $remindAt');
+  }
+
   // ============================================================
   // УВЕДОМЛЕНИЯ (notifications)
   // ============================================================
@@ -422,6 +544,7 @@ class SupabaseService {
 
     final userId = _client.auth.currentUser?.id;
     if (userId != null) {
+      // ✅ Добавляем только user_id — имя и email подтянутся через RPC при загрузке
       await _client.from('family_members').insert({
         'group_id': inv.groupId,
         'user_id': userId,
@@ -429,11 +552,13 @@ class SupabaseService {
         'status': 'active',
       });
 
+      // Увеличиваем количество участников
       final group = await getFamilyGroup(inv.groupId);
       if (group != null) {
         await updateFamilyGroupMembers(inv.groupId, group.members + 1);
       }
 
+      // Уведомление владельцу
       await createNotification(
         userId: inv.fromUserId,
         type: 'invitation_accepted',
@@ -528,76 +653,58 @@ class SupabaseService {
       subs.add(Subscription.fromMap(item, memberCount: memberCount));
     }
     return subs;
-  }  
-      // ✅ Обновить reminder при изменении даты списания
-  static Future<void> updateReminder(String subscriptionId, int newBillingDate) async {
-    final userId = _client.auth.currentUser?.id;
-    if (userId == null) return;
-
-    final reminderDays = _client.auth.currentUser?.userMetadata?['reminder_days'] as int? ?? 2;
-
-    // Удаляем старые reminders
-    await _client
-        .from('reminders')
-        .delete()
-        .eq('subscription_id', subscriptionId)
-        .eq('user_id', userId);
-
-    // Создаём новый reminder
-    final now = DateTime.now();
-    var nextBilling = DateTime(now.year, now.month, newBillingDate);
-    
-    if (nextBilling.isBefore(now)) {
-      nextBilling = DateTime(now.year, now.month + 1, newBillingDate);
-    }
-
-    final remindAt = nextBilling.subtract(Duration(days: reminderDays));
-
-    await _client.from('reminders').insert({
-      'subscription_id': subscriptionId,
-      'user_id': userId,
-      'remind_at': remindAt.toIso8601String(),
-      'is_sent': false,
-    });
-
-    print('✅ Reminder обновлён для подписки $subscriptionId на $remindAt');
   }
 
-  // ✅ Создать reminders для всех существующих подписок
-  static Future<void> createRemindersForAllSubscriptions() async {
+  // ============================================================
+  // ВЫХОД ИЗ СЕМЕЙНОЙ ГРУППЫ
+  // ============================================================
+
+  // ✅ Выход участника из семейной подписки
+   static Future<void> leaveFamilyGroup(String subscriptionId, String groupId) async {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) return;
 
-    final subs = await getSubscriptions();
-    final reminderDays = _client.auth.currentUser?.userMetadata?['reminder_days'] as int? ?? 2;
+    // ✅ Сначала получаем группу, чтобы знать ownerId для уведомления
+    final group = await getFamilyGroup(groupId);
+    if (group == null) return;
 
-    for (var sub in subs) {
-      final existingReminders = await _client
-          .from('reminders')
-          .select()
-          .eq('subscription_id', sub.id)
-          .eq('user_id', userId);
+    final ownerId = group.ownerId;
 
-      if ((existingReminders as List).isEmpty) {
-        final billingDay = sub.billingDate;
-        final now = DateTime.now();
-        var nextBilling = DateTime(now.year, now.month, billingDay);
-        
-        if (nextBilling.isBefore(now)) {
-          nextBilling = DateTime(now.year, now.month + 1, billingDay);
-        }
+    final memberResponse = await _client
+        .from('family_members')
+        .select('id')
+        .eq('group_id', groupId)
+        .eq('user_id', userId)
+        .eq('role', 'member')
+        .maybeSingle();
 
-        final remindAt = nextBilling.subtract(Duration(days: reminderDays));
+    if (memberResponse != null) {
+      await _client.from('family_members').delete().eq('id', memberResponse['id']);
 
-        await _client.from('reminders').insert({
-          'subscription_id': sub.id,
-          'user_id': userId,
-          'remind_at': remindAt.toIso8601String(),
-          'is_sent': false,
-        });
+      if (group.members > 1) {
+        await updateFamilyGroupMembers(groupId, group.members - 1);
+      }
 
-        print('✅ Создан reminder для ${sub.name} на ${remindAt.toIso8601String()}');
+      final subscription = await getSubscriptionById(subscriptionId);
+      if (subscription != null) {
+        await createNotification(
+          userId: ownerId,  // ✅ Теперь ownerId точно не null
+          type: 'system',
+          title: 'Участник вышел из семьи',
+          body: 'Участник покинул семейную подписку "${subscription.name}"',
+          relatedSubscriptionId: subscriptionId,
+          fromUserId: userId,
+        );
       }
     }
+  }
+
+  // ✅ Проверка, является ли текущий пользователь владельцем группы
+  static Future<bool> isGroupOwner(String groupId) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return false;
+
+    final group = await getFamilyGroup(groupId);
+    return group?.ownerId == userId;
   }
 }

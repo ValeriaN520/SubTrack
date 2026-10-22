@@ -143,13 +143,23 @@ class _NotificationScreenState extends State<NotificationScreen> {
     }
   }
 
-  Future<void> _acceptInvitation(Invitation invitation) async {
+    Future<void> _acceptInvitation(Invitation invitation) async {
     try {
       await SupabaseService.acceptInvitation(invitation.id);
+      
+      // ✅ Принудительно обновляем данные после принятия приглашения
       await _loadData();
+      
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Приглашение принято! Подписка добавлена.'), backgroundColor: _primaryColor),
+        );
+        
+        // ✅ Возвращаемся на главный экран для обновления
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const HomeScreen(initialIndex: 0)),
+          (route) => false,
         );
       }
     } catch (e) {

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'auth_screen.dart';
 import 'home_screen.dart';
+import 'auth_screen.dart';
 
 class RegistrationScreen extends StatefulWidget {
   const RegistrationScreen({super.key});
@@ -12,64 +12,90 @@ class RegistrationScreen extends StatefulWidget {
 
 class _RegistrationScreenState extends State<RegistrationScreen> {
   final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _salaryDayController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _confirmPasswordController = TextEditingController();
+  
   bool _isLoading = false;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
+  
+  // ✅ Переменные для ошибок полей
+  String? _nameError;
+  String? _emailError;
+  String? _passwordError;
+  String? _confirmPasswordError;
   String? _errorMessage;
 
   static const Color _primaryColor = Color(0xFF6C47FF);
   static const Color _backgroundColor = Color(0xFFF5F5F7);
   static const Color _textDark = Color(0xFF1A1A1A);
   static const Color _textGray = Color(0xFF6B6B6B);
+  static const Color _dangerColor = Color(0xFFE74C3C);
 
   @override
   void dispose() {
     _nameController.dispose();
-    _salaryDayController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
-  // ✅ Валидация по ТЗ
-  String? _validateName(String name) {
-    if (name.trim().isEmpty) return 'Введите имя';
-    if (name.trim().length < 2) return 'Имя должно содержать минимум 2 символа';
-    return null;
-  }
+  // ✅ Валидация формы
+  bool _validateForm() {
+    bool isValid = true;
 
-  String? _validateSalaryDay(String day) {
-    if (day.trim().isEmpty) return 'Введите дату зарплаты';
-    final d = int.tryParse(day.trim());
-    if (d == null || d < 1 || d > 31) return 'Дата должна быть от 1 до 31';
-    return null;
-  }
+    // Валидация имени
+    if (_nameController.text.trim().isEmpty) {
+      setState(() => _nameError = 'Введите имя');
+      isValid = false;
+    } else {
+      setState(() => _nameError = null);
+    }
 
-  String? _validateEmail(String email) {
-    if (email.trim().isEmpty) return 'Введите email';
-    final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
-    if (!emailRegex.hasMatch(email)) return 'Некорректный email';
-    return null;
-  }
+    // Валидация email
+    final email = _emailController.text.trim();
+    if (email.isEmpty) {
+      setState(() => _emailError = 'Введите email');
+      isValid = false;
+    } else if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(email)) {
+      setState(() => _emailError = 'Некорректный email');
+      isValid = false;
+    } else {
+      setState(() => _emailError = null);
+    }
 
-  String? _validatePassword(String password) {
-    if (password.isEmpty) return 'Введите пароль';
-    if (password.length < 6) return 'Пароль должен содержать минимум 6 символов';
-    return null;
+    // Валидация пароля
+    final password = _passwordController.text;
+    if (password.isEmpty) {
+      setState(() => _passwordError = 'Введите пароль');
+      isValid = false;
+    } else if (password.length < 6) {
+      setState(() => _passwordError = 'Пароль должен содержать минимум 6 символов');
+      isValid = false;
+    } else {
+      setState(() => _passwordError = null);
+    }
+
+    // Валидация подтверждения пароля
+    final confirmPassword = _confirmPasswordController.text;
+    if (confirmPassword.isEmpty) {
+      setState(() => _confirmPasswordError = 'Подтвердите пароль');
+      isValid = false;
+    } else if (confirmPassword != password) {
+      setState(() => _confirmPasswordError = 'Пароли не совпадают');
+      isValid = false;
+    } else {
+      setState(() => _confirmPasswordError = null);
+    }
+
+    return isValid;
   }
 
   Future<void> _register() async {
-    final nameError = _validateName(_nameController.text);
-    final salaryError = _validateSalaryDay(_salaryDayController.text);
-    final emailError = _validateEmail(_emailController.text);
-    final passwordError = _validatePassword(_passwordController.text);
-
-    final error = nameError ?? salaryError ?? emailError ?? passwordError;
-    if (error != null) {
-      setState(() => _errorMessage = error);
-      return;
-    }
+    // ✅ Сначала валидируем форму
+    if (!_validateForm()) return;
 
     setState(() {
       _isLoading = true;
@@ -80,33 +106,33 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       final response = await Supabase.instance.client.auth.signUp(
         email: _emailController.text.trim(),
         password: _passwordController.text,
-        data: {
-          'name': _nameController.text.trim(),
-          'salary_date': int.parse(_salaryDayController.text.trim()),
-        },
+        data: {'name': _nameController.text.trim()},
       );
 
       if (response.user != null && mounted) {
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (_) => const HomeScreen()),
-          (route) => false,
-        );
+        if (response.user!.emailConfirmedAt != null) {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (_) => const HomeScreen()),
+            (route) => false,
+          );
+        } else {
+          setState(() => _errorMessage = 'Письмо для подтверждения отправлено на email');
+        }
       }
     } on AuthException catch (e) {
       if (mounted) {
         String message = 'Ошибка регистрации';
         if (e.message.contains('already registered')) {
-          message = 'Пользователь с таким email уже существует';
+          message = 'Пользователь с таким email уже зарегистрирован';
         } else if (e.message.contains('Password should be at least')) {
-          message = 'Пароль слишком короткий';
+          message = 'Пароль должен содержать минимум 6 символов';
         } else {
           message = e.message;
         }
         setState(() => _errorMessage = message);
       }
     } catch (e) {
-      print('❌ ОШИБКА РЕГИСТРАЦИИ: $e');
       if (mounted) setState(() => _errorMessage = 'Произошла ошибка. Попробуйте снова.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -130,7 +156,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                     Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const SizedBox(height: 32),
+                        const SizedBox(height: 48),
                         Container(
                           width: 80,
                           height: 80,
@@ -140,7 +166,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                         const SizedBox(height: 16),
                         const Text('SubTrack', style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: _textDark)),
                         const SizedBox(height: 6),
-                        const Text('Управляйте подписками и экономьте', style: TextStyle(fontSize: 15, color: _textGray)),
+                        const Text('Создайте аккаунт для начала работы', style: TextStyle(fontSize: 15, color: _textGray)),
                       ],
                     ),
 
@@ -152,19 +178,41 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                           _buildSegmentedControl(isLoginActive: false),
                           const SizedBox(height: 24),
 
-                          _buildInputField(label: 'Имя', controller: _nameController, hintText: 'Валерия'),
-                          const SizedBox(height: 16),
+                          // ✅ Поле имени с подсветкой ошибки
                           _buildInputField(
-                            label: 'Дата зарплаты',
-                            controller: _salaryDayController,
-                            hintText: '10 число',
-                            keyboardType: TextInputType.number,
-                            suffixIcon: const Icon(Icons.calendar_today_outlined, size: 20, color: _textGray),
+                            label: 'Имя',
+                            controller: _nameController,
+                            hintText: 'Валерия',
+                            errorText: _nameError,
                           ),
                           const SizedBox(height: 16),
-                          _buildInputField(label: 'Email', controller: _emailController, hintText: 'valeria@example.ru', keyboardType: TextInputType.emailAddress),
+
+                          // ✅ Поле email с подсветкой ошибки
+                          _buildInputField(
+                            label: 'Email',
+                            controller: _emailController,
+                            hintText: 'valeria@example.ru',
+                            keyboardType: TextInputType.emailAddress,
+                            errorText: _emailError,
+                          ),
                           const SizedBox(height: 16),
-                          _buildPasswordField(),
+
+                          // ✅ Поле пароля с подсветкой ошибки
+                          _buildPasswordField(
+                            controller: _passwordController,
+                            obscureText: _obscurePassword,
+                            onToggle: () => setState(() => _obscurePassword = !_obscurePassword),
+                            errorText: _passwordError,
+                          ),
+                          const SizedBox(height: 16),
+
+                          // ✅ Поле подтверждения пароля с подсветкой ошибки
+                          _buildPasswordField(
+                            controller: _confirmPasswordController,
+                            obscureText: _obscureConfirmPassword,
+                            onToggle: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
+                            errorText: _confirmPasswordError,
+                          ),
                           const SizedBox(height: 24),
 
                           SizedBox(
@@ -177,7 +225,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                                 foregroundColor: Colors.white,
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                                 elevation: 0,
-                                disabledBackgroundColor: _primaryColor.withValues(alpha:0.6),
+                                disabledBackgroundColor: _primaryColor.withOpacity(0.6),
                               ),
                               child: _isLoading
                                   ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
@@ -228,7 +276,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
               behavior: HitTestBehavior.opaque,
               onTap: () {},
               child: Container(
-                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.08), blurRadius: 8, offset: const Offset(0, 2))]),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 8, offset: const Offset(0, 2))]),
                 child: const Center(child: Text('Регистрация', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: _textDark))),
               ),
             ),
@@ -238,14 +286,26 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     );
   }
 
-  Widget _buildInputField({required String label, required TextEditingController controller, required String hintText, TextInputType keyboardType = TextInputType.text, Widget? suffixIcon}) {
+  // ✅ Универсальное поле ввода с ошибкой
+  Widget _buildInputField({
+    required String label,
+    required TextEditingController controller,
+    required String hintText,
+    TextInputType keyboardType = TextInputType.text,
+    String? errorText,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label, style: const TextStyle(fontSize: 15, color: _textGray, fontWeight: FontWeight.w500)),
         const SizedBox(height: 8),
         Container(
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.04), blurRadius: 8, offset: const Offset(0, 2))]),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
+            border: errorText != null ? Border.all(color: _dangerColor, width: 1.5) : null,
+          ),
           child: TextField(
             controller: controller,
             keyboardType: keyboardType,
@@ -253,34 +313,65 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
             decoration: InputDecoration(
               hintText: hintText,
               hintStyle: const TextStyle(color: Color(0xFFAEAEB2), fontSize: 16),
-              suffixIcon: suffixIcon != null ? Padding(padding: const EdgeInsets.only(right: 16), child: suffixIcon) : null,
+              errorText: errorText,
               border: InputBorder.none,
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
             ),
+            onChanged: (_) => setState(() {
+              if (label == 'Имя') _nameError = null;
+              if (label == 'Email') _emailError = null;
+            }),
           ),
         ),
       ],
     );
   }
 
-  Widget _buildPasswordField() {
+  // ✅ Универсальное поле пароля с глазком и ошибкой
+  Widget _buildPasswordField({
+    required TextEditingController controller,
+    required bool obscureText,
+    required VoidCallback onToggle,
+    String? errorText,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('Пароль', style: TextStyle(fontSize: 15, color: _textGray, fontWeight: FontWeight.w500)),
         const SizedBox(height: 8),
         Container(
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.04), blurRadius: 8, offset: const Offset(0, 2))]),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
+            border: errorText != null ? Border.all(color: _dangerColor, width: 1.5) : null,
+          ),
           child: TextField(
-            controller: _passwordController,
-            obscureText: true,
+            controller: controller,
+            obscureText: obscureText,
             style: const TextStyle(fontSize: 16, color: _textDark),
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               hintText: '••••••••',
-              hintStyle: TextStyle(color: Color(0xFFAEAEB2), fontSize: 16),
+              hintStyle: const TextStyle(color: Color(0xFFAEAEB2), fontSize: 16),
+              errorText: errorText,
+              suffixIcon: Padding(
+                padding: const EdgeInsets.only(right: 16),
+                child: GestureDetector(
+                  onTap: onToggle,
+                  child: Icon(
+                    obscureText ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                    color: _textGray,
+                    size: 22,
+                  ),
+                ),
+              ),
               border: InputBorder.none,
-              contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
             ),
+            onChanged: (_) => setState(() {
+              if (controller == _passwordController) _passwordError = null;
+              if (controller == _confirmPasswordController) _confirmPasswordError = null;
+            }),
           ),
         ),
       ],

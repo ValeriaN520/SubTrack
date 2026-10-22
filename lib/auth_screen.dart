@@ -14,13 +14,18 @@ class _AuthScreenState extends State<AuthScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   bool _isLoading = false;
-  bool _obscurePassword = true; // ✅ Добавлено
+  bool _obscurePassword = true;
+  
+  // ✅ Переменные для ошибок полей
+  String? _emailError;
+  String? _passwordError;
   String? _errorMessage;
 
   static const Color _primaryColor = Color(0xFF6C47FF);
   static const Color _backgroundColor = Color(0xFFF5F5F7);
   static const Color _textDark = Color(0xFF1A1A1A);
   static const Color _textGray = Color(0xFF6B6B6B);
+  static const Color _dangerColor = Color(0xFFE74C3C);
 
   @override
   void dispose() {
@@ -29,26 +34,40 @@ class _AuthScreenState extends State<AuthScreen> {
     super.dispose();
   }
 
-  String? _validateEmail(String email) {
-    if (email.trim().isEmpty) return 'Введите email';
-    final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
-    if (!emailRegex.hasMatch(email)) return 'Некорректный email';
-    return null;
-  }
+  // ✅ Валидация формы
+  bool _validateForm() {
+    bool isValid = true;
 
-  String? _validatePassword(String password) {
-    if (password.isEmpty) return 'Введите пароль';
-    if (password.length < 6) return 'Пароль должен содержать минимум 6 символов';
-    return null;
+    // Валидация email
+    final email = _emailController.text.trim();
+    if (email.isEmpty) {
+      setState(() => _emailError = 'Введите email');
+      isValid = false;
+    } else if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(email)) {
+      setState(() => _emailError = 'Некорректный email');
+      isValid = false;
+    } else {
+      setState(() => _emailError = null);
+    }
+
+    // Валидация пароля
+    final password = _passwordController.text;
+    if (password.isEmpty) {
+      setState(() => _passwordError = 'Введите пароль');
+      isValid = false;
+    } else if (password.length < 6) {
+      setState(() => _passwordError = 'Пароль должен содержать минимум 6 символов');
+      isValid = false;
+    } else {
+      setState(() => _passwordError = null);
+    }
+
+    return isValid;
   }
 
   Future<void> _login() async {
-    final emailError = _validateEmail(_emailController.text);
-    final passwordError = _validatePassword(_passwordController.text);
-    if (emailError != null || passwordError != null) {
-      setState(() => _errorMessage = emailError ?? passwordError);
-      return;
-    }
+    // ✅ Сначала валидируем форму
+    if (!_validateForm()) return;
 
     setState(() {
       _isLoading = true;
@@ -126,9 +145,18 @@ class _AuthScreenState extends State<AuthScreen> {
                           _buildSegmentedControl(isLoginActive: true),
                           const SizedBox(height: 24),
 
-                          _buildInputField(label: 'Email', controller: _emailController, hintText: 'valeria@example.ru', keyboardType: TextInputType.emailAddress),
+                          // ✅ Поле email с подсветкой ошибки
+                          _buildInputField(
+                            label: 'Email',
+                            controller: _emailController,
+                            hintText: 'valeria@example.ru',
+                            keyboardType: TextInputType.emailAddress,
+                            errorText: _emailError,
+                          ),
                           const SizedBox(height: 16),
-                          _buildPasswordField(),
+                          
+                          // ✅ Поле пароля с подсветкой ошибки
+                          _buildPasswordField(errorText: _passwordError),
                           const SizedBox(height: 24),
 
                           SizedBox(
@@ -202,14 +230,26 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 
-  Widget _buildInputField({required String label, required TextEditingController controller, required String hintText, TextInputType keyboardType = TextInputType.text, Widget? suffixIcon}) {
+  // ✅ Обновлённое поле ввода с поддержкой ошибки
+  Widget _buildInputField({
+    required String label,
+    required TextEditingController controller,
+    required String hintText,
+    TextInputType keyboardType = TextInputType.text,
+    String? errorText,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label, style: const TextStyle(fontSize: 15, color: _textGray, fontWeight: FontWeight.w500)),
         const SizedBox(height: 8),
         Container(
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))]),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
+            border: errorText != null ? Border.all(color: _dangerColor, width: 1.5) : null,
+          ),
           child: TextField(
             controller: controller,
             keyboardType: keyboardType,
@@ -217,25 +257,33 @@ class _AuthScreenState extends State<AuthScreen> {
             decoration: InputDecoration(
               hintText: hintText,
               hintStyle: const TextStyle(color: Color(0xFFAEAEB2), fontSize: 16),
-              suffixIcon: suffixIcon != null ? Padding(padding: const EdgeInsets.only(right: 16), child: suffixIcon) : null,
+              errorText: errorText,
               border: InputBorder.none,
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
             ),
+            onChanged: (_) => setState(() {
+              if (label == 'Email') _emailError = null;
+            }),
           ),
         ),
       ],
     );
   }
 
-  // ✅ Поле пароля с глазком
-  Widget _buildPasswordField() {
+  // ✅ Поле пароля с глазком и ошибкой
+  Widget _buildPasswordField({String? errorText}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('Пароль', style: TextStyle(fontSize: 15, color: _textGray, fontWeight: FontWeight.w500)),
         const SizedBox(height: 8),
         Container(
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))]),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
+            border: errorText != null ? Border.all(color: _dangerColor, width: 1.5) : null,
+          ),
           child: TextField(
             controller: _passwordController,
             obscureText: _obscurePassword,
@@ -243,6 +291,7 @@ class _AuthScreenState extends State<AuthScreen> {
             decoration: InputDecoration(
               hintText: '••••••••',
               hintStyle: const TextStyle(color: Color(0xFFAEAEB2), fontSize: 16),
+              errorText: errorText,
               suffixIcon: Padding(
                 padding: const EdgeInsets.only(right: 16),
                 child: GestureDetector(
@@ -257,6 +306,7 @@ class _AuthScreenState extends State<AuthScreen> {
               border: InputBorder.none,
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
             ),
+            onChanged: (_) => setState(() => _passwordError = null),
           ),
         ),
       ],

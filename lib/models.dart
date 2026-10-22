@@ -112,6 +112,8 @@ class FamilyMember {
       userId: map['user_id'] as String,
       role: map['role'] as String,
       status: map['status'] as String? ?? 'active',
+      userName: map['user_name'] as String?,
+      userEmail: map['user_email'] as String?, 
     );
   }
 }

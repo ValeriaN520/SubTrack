@@ -31,7 +31,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
     try {
-      final subs = await SupabaseService.getSubscriptions();
+      final ownedSubs = await SupabaseService.getSubscriptions();
+      final memberSubs = await SupabaseService.getMemberSubscriptions();
+
+      final allSubIds = ownedSubs.map((s) => s.id).toSet();
+      final subs = [...ownedSubs];
+      for (var sub in memberSubs) {
+        if (!allSubIds.contains(sub.id)) {
+          subs.add(sub);
+        }
+      }
       if (mounted) setState(() {
         _subscriptions = subs;
         _isLoading = false;

@@ -32,13 +32,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadData();
   }
 
-    Future<void> _loadData() async {
+  Future<void> _loadData() async {
     setState(() => _isLoading = true);
     try {
-      // ✅ Создаём reminders для всех подписок, если их нет
-      await SupabaseService.createRemindersForAllSubscriptions();
-      
-      // Проверяем и отправляем просроченные напоминания
       await _checkAndSendReminders();
 
       final ownedSubs = await SupabaseService.getSubscriptions();
@@ -61,7 +57,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ✅ Проверка и отправка напоминаний
   Future<void> _checkAndSendReminders() async {
     try {
       final reminders = await SupabaseService.getReminders();
@@ -71,11 +66,9 @@ class _HomeScreenState extends State<HomeScreen> {
       for (var reminder in reminders) {
         final remindAt = DateTime.parse(reminder['remind_at'] as String);
 
-        // Если время напоминания наступило и оно ещё не отправлено
         if (remindAt.isBefore(now) && reminder['is_sent'] == false) {
           final subName = (reminder['subscriptions'] as Map?)?['name'] as String? ?? 'подписке';
 
-          // Создаём уведомление
           await SupabaseService.createNotification(
             userId: reminder['user_id'] as String,
             type: 'billing_reminder',
@@ -84,12 +77,10 @@ class _HomeScreenState extends State<HomeScreen> {
             relatedSubscriptionId: reminder['subscription_id'] as String,
           );
 
-          // Отмечаем как отправленное
           await SupabaseService.markReminderSent(reminder['id'] as String);
           sentCount++;
         }
       }
-
       if (sentCount > 0) {
         print('✅ Отправлено $sentCount напоминаний');
       }
@@ -104,6 +95,7 @@ class _HomeScreenState extends State<HomeScreen> {
   double get _totalMonthPrice {
     return _subscriptions.fold<double>(0, (sum, s) {
       if (s.isTrial) return sum;
+      // ✅ calculateMonthlyPrice внутри уже использует getEffectivePrice (делит на участников)
       return sum + SupabaseService.calculateMonthlyPrice(s);
     });
   }
@@ -157,11 +149,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       Center(
                         child: Column(
                           children: [
-                            Icon(Icons.credit_card_outlined, size: 64, color: _textGray.withValues(alpha:0.4)),
+                            Icon(Icons.credit_card_outlined, size: 64, color: _textGray.withValues(alpha: 0.4)),
                             const SizedBox(height: 16),
                             const Text('Подписки отсутствуют', style: TextStyle(fontSize: 18, color: _textGray, fontWeight: FontWeight.w500)),
                             const SizedBox(height: 8),
-                            Text('Нажмите +, чтобы добавить первую', style: TextStyle(fontSize: 14, color: _textGray.withValues(alpha:0.7))),
+                            Text('Нажмите +, чтобы добавить первую', style: TextStyle(fontSize: 14, color: _textGray.withValues(alpha: 0.7))),
                           ],
                         ),
                       ),
@@ -237,7 +229,7 @@ class _HomeScreenState extends State<HomeScreen> {
           color: Colors.white,
           borderRadius: BorderRadius.circular(14),
           border: isUrgent ? Border.all(color: const Color(0xFFFF4444), width: 1.5) : null,
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.04), blurRadius: 8, offset: const Offset(0, 2))],
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -306,7 +298,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildBottomNav() {
     return Container(
       height: 70,
-      decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.06), blurRadius: 10, offset: const Offset(0, -2))]),
+      decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 10, offset: const Offset(0, -2))]),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
@@ -443,7 +435,7 @@ class _SwipeableCardState extends State<_SwipeableCard> {
               offset: Offset(_offsetX, 0),
               child: Container(
                 padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.04), blurRadius: 8, offset: const Offset(0, 2))]),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))]),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
@@ -497,6 +489,7 @@ class _SwipeableCardState extends State<_SwipeableCard> {
                       ),
                     ),
                     const SizedBox(width: 14),
+                    // ✅ ИСПРАВЛЕННЫЙ БЛОК С ЦЕНОЙ
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       mainAxisSize: MainAxisSize.min,
@@ -507,12 +500,19 @@ class _SwipeableCardState extends State<_SwipeableCard> {
                           crossAxisAlignment: CrossAxisAlignment.baseline,
                           textBaseline: TextBaseline.alphabetic,
                           children: [
-                            Text('${sub.price.toStringAsFixed(0)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _textDark)),
+                            // ✅ Используем getEffectivePrice, который делит сумму на участников
+                            Text(
+                              '${SupabaseService.getEffectivePrice(sub).toStringAsFixed(0)}',
+                              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _textDark),
+                            ),
                             const SizedBox(width: 3),
                             const Text('₽', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _textDark)),
                           ],
                         ),
                         const SizedBox(height: 4),
+                        // ✅ Добавляем пометку "ваша доля" для семейных подписок
+                        if (sub.hasFamily && sub.memberCount != null && sub.memberCount! > 1)
+                          Text('ваша доля', style: TextStyle(fontSize: 9, color: _primaryColor, fontWeight: FontWeight.w600)),
                         Text(sub.periodLabel, style: TextStyle(fontSize: 11, color: _textGray)),
                       ],
                     ),

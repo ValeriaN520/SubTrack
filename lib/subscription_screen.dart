@@ -19,6 +19,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   FamilyGroup? _familyGroup;
   bool _isLoadingMembers = true;
   String? _emailError;
+  bool _isOwner = false; // ✅ Флаг владельца
 
   static const Color _primaryColor = Color(0xFF6C47FF);
   static const Color _backgroundColor = Color(0xFFF5F5F7);
@@ -44,10 +45,15 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     try {
       final group = await SupabaseService.getFamilyGroup(_sub.familyGroupId!);
       final members = await SupabaseService.getFamilyMembers(_sub.familyGroupId!);
+      
+      // ✅ Проверяем, является ли текущий пользователь владельцем
+      final currentUserId = SupabaseService.client.auth.currentUser?.id;
+      final isOwner = group?.ownerId == currentUserId;
 
       if (mounted) setState(() {
         _familyGroup = group;
         _members = members;
+        _isOwner = isOwner;
         _isLoadingMembers = false;
       });
     } catch (_) {
@@ -66,7 +72,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     super.dispose();
   }
 
-    Future<void> _handleInvite() async {
+  Future<void> _handleInvite() async {
     setState(() => _emailError = null);
     final email = _emailController.text.trim();
 
@@ -94,6 +100,51 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         const SnackBar(content: Text('Приглашение отправлено!'), backgroundColor: _primaryColor),
       );
       _emailController.clear();
+    }
+  }
+
+    // ✅ Выход из семейной подписки (для участника)
+  Future<void> _leaveFamily() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Выйти из семейной подписки?'),
+        content: const Text('Вы перестанете быть участником этой подписки.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: _dangerColor, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+            child: const Text('Выйти'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        await SupabaseService.leaveFamilyGroup(_sub.id, _sub.familyGroupId!);
+        if (mounted) {
+          // ✅ Показываем уведомление
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Вы вышли из семейной подписки'), backgroundColor: _primaryColor),
+          );
+          
+          // ✅ Возвращаемся на главный экран
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (_) => const HomeScreen(initialIndex: 0)),
+            (route) => false,
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Ошибка: $e'), backgroundColor: _dangerColor),
+          );
+        }
+      }
     }
   }
 
@@ -163,10 +214,15 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                     const SizedBox(height: 24),
                     _buildInfoField('${_sub.billingDate} число', Icons.calendar_today_outlined, label: 'Дата списания'),
                     const SizedBox(height: 24),
-                    const Text('Вы владелец', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: _textDark)),
-                    const SizedBox(height: 12),
-                    _buildInviteBlock(),
-                    const SizedBox(height: 24),
+                    
+                    // ✅ Блок "Вы владелец" только для владельца
+                    if (_isOwner) ...[
+                      const Text('Вы владелец', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: _textDark)),
+                      const SizedBox(height: 12),
+                      _buildInviteBlock(),
+                      const SizedBox(height: 24),
+                    ],
+                    
                     const Text('Участники', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: _textDark)),
                     const SizedBox(height: 12),
                     _buildMembersList(),
@@ -218,28 +274,45 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
             child: Column(
               children: [
-                SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ChangeSubScreen(subscription: _sub))).then((_) async {
-                      await _reloadSubscription();
-                      if (_isFamily) await _loadFamilyData();
-                    }),
-                    style: ElevatedButton.styleFrom(backgroundColor: _primaryColor, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
-                    child: const Text('Редактировать', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                // ✅ Кнопка "Редактировать" только для владельца
+                if (_isOwner || !_isFamily)
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ChangeSubScreen(subscription: _sub))).then((_) async {
+                        await _reloadSubscription();
+                        if (_isFamily) await _loadFamilyData();
+                      }),
+                      style: ElevatedButton.styleFrom(backgroundColor: _primaryColor, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
+                      child: const Text('Редактировать', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    ),
                   ),
-                ),
                 const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: OutlinedButton(
-                    onPressed: () => _showDeleteDialog(),
-                    style: OutlinedButton.styleFrom(foregroundColor: _dangerColor, side: const BorderSide(color: _dangerColor), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                    child: Text(_isFamily ? 'Удалить семейную подписку' : 'Удалить подписку', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                
+                // ✅ Кнопка "Выйти из семьи" для участника
+                if (_isFamily && !_isOwner)
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: OutlinedButton(
+                      onPressed: _leaveFamily,
+                      style: OutlinedButton.styleFrom(foregroundColor: _dangerColor, side: const BorderSide(color: _dangerColor), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                      child: const Text('Выйти из семейной подписки', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    ),
                   ),
-                ),
+                
+                // ✅ Кнопка "Удалить" только для владельца или обычной подписки
+                if (_isOwner || !_isFamily)
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: OutlinedButton(
+                      onPressed: () => _showDeleteDialog(),
+                      style: OutlinedButton.styleFrom(foregroundColor: _dangerColor, side: const BorderSide(color: _dangerColor), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                      child: Text(_isFamily ? 'Удалить семейную подписку' : 'Удалить подписку', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -252,7 +325,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   Widget _buildFamilyCard() {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.04), blurRadius: 8, offset: const Offset(0, 2))]),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))]),
       child: Row(
         children: [
           Container(width: 56, height: 56, decoration: BoxDecoration(color: _getColorForCategory(_sub.category), borderRadius: BorderRadius.circular(12)), child: Center(child: Text(_sub.name.isNotEmpty ? _sub.name[0].toUpperCase() : '?', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: _textDark)))),
@@ -271,7 +344,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   Widget _buildRegularCard() {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.04), blurRadius: 8, offset: const Offset(0, 2))]),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))]),
       child: Row(
         children: [
           Container(width: 56, height: 56, decoration: BoxDecoration(color: _getColorForCategory(_sub.category), borderRadius: BorderRadius.circular(12)), child: Center(child: Text(_sub.name.isNotEmpty ? _sub.name[0].toUpperCase() : '?', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: _textDark)))),
@@ -291,7 +364,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         Container(
           height: 50,
           padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.04), blurRadius: 8, offset: const Offset(0, 2))]),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))]),
           alignment: Alignment.centerLeft,
           child: Row(children: [Expanded(child: Text(value, style: const TextStyle(fontSize: 15, color: _textDark))), if (icon != null) Icon(icon, color: _textGray, size: 18)]),
         ),
@@ -310,7 +383,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         Container(
           height: 50,
           padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.04), blurRadius: 8, offset: const Offset(0, 2))]),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))]),
           child: Row(children: [Expanded(child: Text(text, style: const TextStyle(fontSize: 15, color: _textDark))), Icon(icon, color: _textGray, size: 18)]),
         ),
       ],
@@ -320,7 +393,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   Widget _buildInviteBlock() {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.04), blurRadius: 8, offset: const Offset(0, 2))]),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))]),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -365,13 +438,12 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     );
   }
 
-    Widget _buildMembersList() {
+  Widget _buildMembersList() {
     if (_isLoadingMembers) return const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()));
 
     final currentUserId = SupabaseService.client.auth.currentUser?.id;
-    final currentUserName = SupabaseService.userName;
-    final currentUserEmail = SupabaseService.userEmail;
 
+    // ✅ Ищем владельца в списке
     FamilyMember? dbOwner;
     for (var m in _members) {
       if (m.role == 'owner') {
@@ -380,21 +452,21 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
       }
     }
 
+    // ✅ Fallback на данные текущего пользователя если RPC не вернул
     final owner = FamilyMember(
       id: dbOwner?.id ?? 'owner',
       groupId: _sub.familyGroupId ?? '',
       userId: dbOwner?.userId ?? currentUserId ?? '',
       role: 'owner',
       status: 'active',
-      userName: (dbOwner?.userId == currentUserId) ? currentUserName : (dbOwner?.userName ?? currentUserName ?? 'Владелец'),
-      userEmail: (dbOwner?.userId == currentUserId) ? currentUserEmail : (dbOwner?.userEmail ?? currentUserEmail ?? ''),
+      userName: dbOwner?.userName ?? SupabaseService.userName,
+      userEmail: dbOwner?.userEmail ?? SupabaseService.userEmail,
     );
 
     final otherMembers = _members.where((m) => m.role != 'owner').toList();
-    final isCurrentUserOwner = owner.userId == currentUserId;
 
     return Container(
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.04), blurRadius: 8, offset: const Offset(0, 2))]),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))]),
       child: Column(
         children: [
           Padding(
@@ -421,57 +493,30 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
           if (otherMembers.isNotEmpty) const Divider(color: Color(0xFFF0F0F5), height: 1),
 
           for (int i = 0; i < otherMembers.length; i++) ...[
+            // ✅ Свайп для удаления работает только у владельца
             Dismissible(
               key: Key(otherMembers[i].id),
-              direction: isCurrentUserOwner ? DismissDirection.endToStart : DismissDirection.none,
+              direction: _isOwner ? DismissDirection.endToStart : DismissDirection.none,
               background: Container(alignment: Alignment.centerRight, padding: const EdgeInsets.only(right: 20), decoration: const BoxDecoration(color: Color(0xFFE74C3C), borderRadius: BorderRadius.only(topRight: Radius.circular(16), bottomRight: Radius.circular(16))), child: const Icon(Icons.delete_outline, color: Colors.white, size: 24)),
-              confirmDismiss: isCurrentUserOwner ? (_) => _showDeleteMemberDialog(otherMembers[i]) : null,
+              confirmDismiss: _isOwner ? (_) => _showDeleteMemberDialog(otherMembers[i]) : null,
               child: Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16, vertical: i == otherMembers.length - 1 ? 16 : 12),
-                child: Column(
+                child: Row(
                   children: [
-                    Row(
-                      children: [
-                        Container(width: 44, height: 44, decoration: BoxDecoration(color: _getColorForIndex(i), borderRadius: BorderRadius.circular(10)), child: Center(child: Text((otherMembers[i].userName ?? otherMembers[i].userEmail ?? '?')[0].toUpperCase(), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _textDark)))),
-                        const SizedBox(width: 12),
-                        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Text(otherMembers[i].userName ?? 'Пользователь', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: _textDark)),
-                          const SizedBox(height: 2),
-                          Text(otherMembers[i].userEmail ?? '', style: const TextStyle(fontSize: 12, color: _textGray)),
-                        ])),
-                        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                          Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
-                            Text('${_sharePerMember.toStringAsFixed(0)}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: _textDark)),
-                            const SizedBox(width: 2), const Text('₽', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _textDark)),
-                          ]),
-                          const SizedBox(height: 2), const Text('в месяц', style: TextStyle(fontSize: 11, color: _textGray)),
-                        ]),
-                      ],
-                    ),
-                    if (otherMembers[i].userId == currentUserId && !isCurrentUserOwner) ...[
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: () async {
-                            await SupabaseService.markPaymentSent(_sub.id, _sub.familyGroupId!);
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Владелец уведомлён о переводе'), backgroundColor: _primaryColor),
-                              );
-                            }
-                          },
-                          icon: const Icon(Icons.check_circle_outline, size: 18),
-                          label: const Text('Я скинул', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFF10B981),
-                            side: const BorderSide(color: Color(0xFF10B981)),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                          ),
-                        ),
-                      ),
-                    ],
+                    Container(width: 44, height: 44, decoration: BoxDecoration(color: _getColorForIndex(i), borderRadius: BorderRadius.circular(10)), child: Center(child: Text((otherMembers[i].userName ?? otherMembers[i].userEmail ?? '?')[0].toUpperCase(), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _textDark)))),
+                    const SizedBox(width: 12),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(otherMembers[i].userName ?? 'Пользователь', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: _textDark)),
+                      const SizedBox(height: 2),
+                      Text(otherMembers[i].userEmail ?? '', style: const TextStyle(fontSize: 12, color: _textGray)),
+                    ])),
+                    Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                      Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
+                        Text('${_sharePerMember.toStringAsFixed(0)}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: _textDark)),
+                        const SizedBox(width: 2), const Text('₽', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _textDark)),
+                      ]),
+                      const SizedBox(height: 2), const Text('в месяц', style: TextStyle(fontSize: 11, color: _textGray)),
+                    ]),
                   ],
                 ),
               ),
@@ -558,7 +603,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   Widget _buildBottomNav() {
     return Container(
       height: 70,
-      decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black.withValues(alpha:0.06), blurRadius: 10, offset: const Offset(0, -2))]),
+      decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 10, offset: const Offset(0, -2))]),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [

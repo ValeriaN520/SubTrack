@@ -54,7 +54,7 @@ class _ChangeProfileScreenState extends State<ChangeProfileScreen> {
       // ✅ Сохраняем в user_metadata через SupabaseService
       await SupabaseService.updateProfile(
         name: _nameController.text.trim(),
-        salaryDate: int.parse(_selectedSalaryDate.replaceAll(' число', '')),
+        reminderDays: int.parse(_selectedSalaryDate.replaceAll(' число', '')),
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Профиль сохранён!'), backgroundColor: _primaryColor));
